@@ -14,15 +14,19 @@ Step :: struct {
 }
 
 State :: struct {
-	steps:      [4]Step,
-	index:      int,
-	custom:     f64,
-	game:       Game,
-	status:     string,
-	connected:  bool,
-	measured:   f64,
-	last_count: u32,
-	last_tick:  time.Tick,
+	steps:        [4]Step,
+	index:        int,
+	custom:       f64,
+	game:         Game,
+	status:       string,
+	connected:    bool,
+	measured:     f64,
+	last_count:   u32,
+	last_tick:    time.Tick,
+	window:       Window_Info,
+	have_window:  bool,
+	last_slot:    int, // last plant slot picked, for the UI readout
+	last_slot_ok: bool,
 }
 
 POLL_MS :: 16 // ~60 Hz key polling
@@ -130,8 +134,24 @@ draw :: proc(s: ^State) {
 		fmt.sbprintf(&sb, "  \x1b[33m%s\x1b[0m\n", s.status)
 	}
 
+	// Plant selection status.
+	if !SEED_CALIBRATED {
+		strings.write_string(
+			&sb,
+			"  plants:   \x1b[33muncalibrated - number keys disabled\x1b[0m\n",
+		)
+	} else if !s.have_window {
+		strings.write_string(&sb, "  plants:   \x1b[33mno game window\x1b[0m\n")
+	} else if s.last_slot_ok {
+		label := s.last_slot == 9 ? 0 : s.last_slot + 1
+		fmt.sbprintf(&sb, "  plants:   ready  (last picked \x1b[1;36m%d\x1b[0m)\n", label)
+	} else {
+		strings.write_string(&sb, "  plants:   ready\n")
+	}
+
 	strings.write_string(&sb, "\n  \x1b[90m------------------------------------\x1b[0m\n")
 	strings.write_string(&sb, "  \x1b[1mSPACE\x1b[0m  cycle speed\n")
+	strings.write_string(&sb, "  \x1b[1m1-9,0\x1b[0m  select plant\n")
 	strings.write_string(&sb, "  \x1b[1mC\x1b[0m      set custom value\n")
 	strings.write_string(&sb, "  \x1b[1mQ\x1b[0m      quit (restores 1x)\n")
 
@@ -193,6 +213,7 @@ main :: proc() {
 			if s.connected {
 				s.last_count = 0
 				apply_current(&s)
+				s.window, s.have_window = find_game_window(s.game.pid)
 			}
 			reattach_at = time.tick_add(time.tick_now(), 1 * time.Second)
 		}
@@ -204,6 +225,19 @@ main :: proc() {
 		if pressed(&kw, 'C') {
 			prompt_custom(&s)
 			last_draw = {}
+		}
+
+		// Number keys pick a seed packet. select_plant() is a no-op unless the
+		// game is the focused window, so typing digits elsewhere is inert.
+		if s.have_window {
+			for vk in i32('0') ..= i32('9') {
+				if pressed(&kw, vk) {
+					if slot, ok := vk_to_slot(vk); ok {
+						s.last_slot_ok = select_plant(s.window, slot)
+						s.last_slot = slot
+					}
+				}
+			}
 		}
 		if pressed(&kw, 'Q') || pressed(&kw, win.VK_ESCAPE) {
 			if s.connected {
