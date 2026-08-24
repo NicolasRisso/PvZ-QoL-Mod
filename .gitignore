@@ -1,0 +1,11 @@
+# Build output
+*.exe
+*.pdb
+*.obj
+*.lib
+*.ilk
+
+# Reverse engineering working files - never commit game code
+*.bin
+*.dump
+dumps/
