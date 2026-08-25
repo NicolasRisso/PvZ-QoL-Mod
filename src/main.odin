@@ -129,6 +129,7 @@ Key_Watch :: struct {
 Alt_Watch :: struct {
 	down:           bool,
 	dirty:          bool, // another key went down during this hold
+	reverse:        bool, // Shift was held at any point during this Alt tap
 	primed:         bool,
 	was_focused:  bool,
 	settle_frames: int, // frames left to ignore ALT entirely
@@ -146,36 +147,41 @@ alt_note_focus :: proc(aw: ^Alt_Watch, focused_now: bool) {
 	aw.was_focused = focused_now
 }
 
-alt_tapped :: proc(aw: ^Alt_Watch, game_focused: bool) -> bool {
+alt_cycle_direction :: proc(aw: ^Alt_Watch, game_focused: bool) -> int {
 	down := (u16(win.GetAsyncKeyState(win.VK_MENU)) & 0x8000) != 0
+	shift_down := (u16(win.GetAsyncKeyState(win.VK_SHIFT)) & 0x8000) != 0
 	defer aw.down = down
 
 	if !aw.primed {
 		aw.primed = true
 		// A hold already in progress at startup is by definition not the user's.
 		aw.dirty = true
-		return false
+		return 0
 	}
 	if aw.settle_frames > 0 {
 		aw.settle_frames -= 1
 		aw.dirty = true // whatever happens during the blackout is not a tap
-		return false
+		return 0
 	}
 	if down && !aw.down {
 		aw.dirty = false // start of a fresh hold
-		return false
+		aw.reverse = shift_down
+		return 0
 	}
 	if down {
+		aw.reverse = aw.reverse || shift_down
 		// Any companion key (Tab being the one that matters) disqualifies it.
 		if (u16(win.GetAsyncKeyState(win.VK_TAB)) & 0x8000) != 0 {
 			aw.dirty = true
 		}
-		return false
+		return 0
 	}
 	if !down && aw.down {
-		return !aw.dirty && game_focused
+		if !aw.dirty && game_focused {
+			return aw.reverse ? -1 : 1
+		}
 	}
-	return false
+	return 0
 }
 
 // Edge-triggered, polled globally so the hotkeys work while the game has focus.
@@ -371,8 +377,8 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool) {
 	// --- footer ---
 	fy: i32 = WIN_H - 46
 	rl.DrawLine(14, fy - 10, WIN_W - 14, fy - 10, COL_PANEL)
-	draw_text("ALT speed   A collect   1-9,0 plant   X shovel", 14, fy, 12, COL_MUTED)
-	draw_text("hotkeys act only while the game is focused", 14, fy + 16, 12, COL_MUTED)
+	draw_text("ALT forward   SHIFT+ALT back", 14, fy, 12, COL_MUTED)
+	draw_text("A collect   1-9,0 plant   X shovel", 14, fy + 16, 12, COL_MUTED)
 }
 
 main :: proc() {
@@ -452,8 +458,8 @@ main :: proc() {
 			// is taking focus, so that reopened the spurious-cycle bug.
 			alt_note_focus(&aw, bool(rl.IsWindowFocused()))
 			focused := s.have_window && game_is_focused(s.window)
-			if alt_tapped(&aw, focused) {
-				s.index = (s.index + 1) % len(s.steps)
+			if direction := alt_cycle_direction(&aw, focused); direction != 0 {
+				s.index = (s.index + direction + len(s.steps)) % len(s.steps)
 				apply_current(&s)
 			}
 			if s.have_window {
@@ -464,7 +470,7 @@ main :: proc() {
 					if pressed(&kw, vk) {
 						s.next_collect = time.tick_add(time.tick_now(), COLLECT_INPUT_GRACE)
 						if slot, ok := vk_to_slot(vk); ok {
-							s.last_slot_ok = select_plant(&s.window, slot)
+							s.last_slot_ok = select_plant(&s.game, &s.window, slot)
 							s.last_slot = slot
 							if s.last_slot_ok {
 								s.slot_flash = 0.35

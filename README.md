@@ -47,14 +47,15 @@ Closing the panel restores the game to 1x speed.
 
 | Input | Action |
 |---|---|
-| `Alt` | Cycle 1x → 2x → 3x → custom speed |
+| `Alt` | Cycle forward: 1x → 2x → 3x → custom speed |
+| `Shift+Alt` | Cycle backward through the speed presets |
 | `1`–`9` | Select seed slots 1–9 |
 | `0` | Select seed slot 10 |
 | `X` | Select the shovel |
 | `A` | Toggle automatic sun/coin collection |
 
-Hotkeys act only while the PvZ window is focused. A clean Alt tap changes speed;
-Alt+Tab is ignored.
+Hotkeys act only while the PvZ window is focused. Clean Alt and Shift+Alt taps
+change speed; Alt+Tab is ignored.
 
 The speed presets and auto-collect toggle can also be clicked in the panel. The
 custom speed box accepts values from 1x to 100x, though 1x–4x is the practical range.

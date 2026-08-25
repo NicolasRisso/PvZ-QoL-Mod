@@ -86,6 +86,11 @@ OFF_CURSOR_TYPE :: uintptr(0x30)
 CURSOR_TYPE_NORMAL :: i32(0)
 
 OFF_SEED_BANK_NUM_PACKETS :: uintptr(0x24)
+OFF_SEED_BANK_PACKETS :: uintptr(0x28)
+SEED_PACKET_STRIDE :: uintptr(0x50)
+
+OFF_OBJECT_X :: uintptr(0x08)
+OFF_OBJECT_Y :: uintptr(0x0C)
 
 MAX_COIN_ENTRIES :: u32(1024)
 

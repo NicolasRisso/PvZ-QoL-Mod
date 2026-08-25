@@ -140,6 +140,11 @@ at the fingerprint, before any write happens.
 
 # Seed bank geometry (plant selection)
 
+> Current implementation note: packet clicks now read each live SeedPacket's
+> GameObject rectangle from `SeedBank+0x28` (stride `0x50`). The fixed geometry
+> below remains useful for the shovel, but should not be used for packet clicks:
+> spacing changes when the bank contains more than six slots.
+
 Measured against level 1-7, standard 6-packet seed bank, 800x600 client.
 
 | slot | card x range | centre |

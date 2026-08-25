@@ -77,7 +77,42 @@ shovel_index :: proc(plant_count: int) -> int {
 }
 
 select_shovel :: proc(info: ^Window_Info, plant_count: int) -> bool {
-	return select_plant(info, shovel_index(plant_count))
+	if !game_is_focused(info^) {
+		return false
+	}
+	if updated, ok := refresh_window(info.hwnd); ok {
+		info^ = updated
+	}
+	x, y := packet_point(info^, shovel_index(plant_count))
+	return click_client_point(info, x, y)
+}
+
+// Read the packet's actual GameObject rectangle. Packet spacing changes as the
+// bank grows, so extrapolating from a six-slot bank misses later slots.
+seed_packet_point :: proc(g: ^Game, index: int) -> (x, y: f32, ok: bool) {
+	board, board_ok := resolve_board(g)
+	if !board_ok {
+		return 0, 0, false
+	}
+	seed_bank_ptr, ptr_ok := read_u32(g, board + OFF_BOARD_SEED_BANK)
+	if !ptr_ok || seed_bank_ptr == 0 {
+		return 0, 0, false
+	}
+	count, count_ok := read_i32(g, uintptr(seed_bank_ptr) + OFF_SEED_BANK_NUM_PACKETS)
+	if !count_ok || index < 0 || index >= int(count) || count > MAX_SEED_SLOTS {
+		return 0, 0, false
+	}
+
+	packet := uintptr(seed_bank_ptr) + OFF_SEED_BANK_PACKETS + uintptr(index) * SEED_PACKET_STRIDE
+	px, x_ok := read_i32(g, packet + OFF_OBJECT_X)
+	py, y_ok := read_i32(g, packet + OFF_OBJECT_Y)
+	width, w_ok := read_i32(g, packet + OFF_OBJECT_WIDTH)
+	height, h_ok := read_i32(g, packet + OFF_OBJECT_HEIGHT)
+	if !x_ok || !y_ok || !w_ok || !h_ok ||
+	   px < 0 || py < 0 || width <= 0 || width > 100 || height <= 0 || height > 100 {
+		return 0, 0, false
+	}
+	return f32(px) + f32(width) * 0.5, f32(py) + f32(height) * 0.5, true
 }
 
 Window_Info :: struct {
@@ -175,7 +210,7 @@ cursor_in_client :: proc(hwnd: win.HWND) -> (p: win.POINT, ok: bool) {
 MK_LBUTTON :: 0x0001
 
 // Select seed packet `index` (0-based) without moving the physical cursor.
-select_plant :: proc(info: ^Window_Info, index: int) -> bool {
+select_plant :: proc(g: ^Game, info: ^Window_Info, index: int) -> bool {
 	if index < 0 || index > MAX_SLOT_INDEX {
 		return false
 	}
@@ -183,13 +218,11 @@ select_plant :: proc(info: ^Window_Info, index: int) -> bool {
 		return false
 	}
 
-	// Pick up any resize / fullscreen change since we attached.
-	if updated, ok := refresh_window(info.hwnd); ok {
-		info^ = updated
+	cx, cy, point_ok := seed_packet_point(g, index)
+	if !point_ok {
+		return false
 	}
-
-	cx, cy := packet_point(info^, index)
-	return click_client_point(info, cx, cy)
+	return click_design_point(info, cx, cy)
 }
 
 // Click a point in the game's current client coordinate system without moving
