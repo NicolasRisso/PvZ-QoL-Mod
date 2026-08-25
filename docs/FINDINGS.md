@@ -134,3 +134,78 @@ at the fingerprint, before any write happens.
 - Ghidra 12.1.3 with a Temurin JDK 21
 - Headless analysis + a small decompile-at-address script
 - Python `ctypes` for live memory work
+
+
+---
+
+# Seed bank geometry (plant selection)
+
+Measured against level 1-7, standard 6-packet seed bank, 800x600 client.
+
+| slot | card x range | centre |
+|---|---|---|
+| 1 | 96-142 | 119 |
+| 2 | 155-201 | 178 |
+| 3 | 214-260 | 237 |
+| 4 | 273-319 | 296 |
+| 5 | 332-378 | 355 |
+| 6 | 391-437 | 414 |
+
+**Pitch is 59 px, cards are ~47 wide.** Vertical extent y 8-77, centre y 42.
+
+An earlier estimate of 51.5 px was wrong and produced an off-by-one at the far
+end of the bank: a click aimed at slot 5 landed in slot 4's hit region. Aim at
+the centre, not the edge - the inter-card gap belongs to the preceding slot.
+
+## How it was measured
+
+Eyeballing a screenshot was not accurate enough, and two automated attempts
+produced garbage worth recording so they are not repeated:
+
+1. **Brightness thresholding** on the card art - failed, the art varies too much
+   between packets.
+2. **Sweeping the mouse and diffing memory** - produced a beautiful stepped
+   pattern that was entirely an artifact. The "steps" were 41 samples wide at
+   50 ms per sample, i.e. a ~2 s animation cycle aliased against the sample
+   rate. Sampling positions consecutively makes any time-varying field look
+   position-dependent. **Interleave the positions (A B A B) instead**; doing so
+   reduced 741 candidate addresses to exactly one - the raw mouse coordinate.
+
+What finally worked: detect the card's bright, desaturated cost strip
+(`brightness > 140 && saturation < 0.35` over y 64..74). The strip is broken up
+by the dark cost digits, so take the first and last run of each cluster as the
+card extent.
+
+## Verification
+
+Post a click at a computed centre, capture the seed bank before and after, and
+compute the mean per-slot pixel difference. A correct hit changes exactly one
+slot:
+
+```
+clicked slot 5 at x=355
+   slot 1: 0.00    slot 4: 0.00
+   slot 2: 0.00    slot 5: 421.50  <== CHANGED
+   slot 3: 0.00    slot 6: 0.00
+```
+
+Do this on a *live* board with a short interval between captures - sun changes
+grey packets in and out and will otherwise swamp the signal. Also pick an
+affordable plant: clicking a packet you cannot afford does nothing, which reads
+identically to a missed click.
+
+# Input injection
+
+The game imports `GetCursorPos` + `ScreenToClient` and runs a plain
+`PeekMessageA` loop, no DirectInput. It tracks the mouse position at
+**app+0x1608**.
+
+Posting `WM_MOUSEMOVE` / `WM_LBUTTONDOWN` / `WM_LBUTTONUP` to the game's HWND
+works and requires no cursor movement. Post a final `WM_MOUSEMOVE` back to the
+user's real cursor position afterwards so the selected plant follows their
+pointer.
+
+**The game ignores UI input while its window is not active** - posted messages
+are still received and the coordinate is stored, but no widget reacts. Any
+calibration attempt against an unfocused *or paused* game will find nothing.
+Check both before concluding the approach does not work.

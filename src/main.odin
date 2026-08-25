@@ -6,7 +6,7 @@ import win "core:sys/windows"
 import "core:time"
 import rl "vendor:raylib"
 
-// Speed presets cycled by SPACE. The last one is user-editable.
+// Speed presets cycled by ALT. The last one is user-editable.
 Step :: struct {
 	label: cstring,
 	speed: f64,
@@ -95,8 +95,8 @@ pressed :: proc(kw: ^Key_Watch, vk: i32) -> bool {
 	return down && !prev
 }
 
-// SPACE must not fire while the user is typing into our own custom-speed box,
-// otherwise it would cycle the preset out from under them.
+// Hotkeys must not fire while the user is typing into our own custom-speed box,
+// otherwise ALT/digits would act on the game instead of the text field.
 typing_in_gui :: proc(edit_mode: bool) -> bool {
 	return edit_mode && rl.IsWindowFocused()
 }
@@ -197,10 +197,7 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool) {
 	rl.DrawText("PLANTS", 14, y, 12, COL_MUTED)
 	y += 20
 
-	if !SEED_CALIBRATED {
-		rl.DrawText("number keys disabled", 14, y, 14, COL_WARN)
-		rl.DrawText("seed positions not calibrated yet", 14, y + 18, 12, COL_MUTED)
-	} else if !s.have_window {
+	if !s.have_window {
 		rl.DrawText("no game window", 14, y, 14, COL_WARN)
 	} else {
 		rl.DrawText("press 1-9, 0 in game", 14, y, 14, COL_TEXT)
@@ -220,7 +217,7 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool) {
 	// --- footer ---
 	fy: i32 = WIN_H - 46
 	rl.DrawLine(14, fy - 10, WIN_W - 14, fy - 10, COL_PANEL)
-	rl.DrawText("SPACE cycle speed    1-9,0 pick plant", 14, fy, 12, COL_MUTED)
+	rl.DrawText("ALT cycle speed    1-9,0 pick plant", 14, fy, 12, COL_MUTED)
 	rl.DrawText("hotkeys work while the game is focused", 14, fy + 16, 12, COL_MUTED)
 }
 
@@ -269,7 +266,8 @@ main :: proc() {
 		}
 
 		if !typing_in_gui(edit_mode) {
-			if pressed(&kw, win.VK_SPACE) {
+			// ALT, not SPACE: space pauses Plants vs. Zombies.
+			if pressed(&kw, win.VK_MENU) {
 				s.index = (s.index + 1) % len(s.steps)
 				apply_current(&s)
 			}
@@ -277,7 +275,7 @@ main :: proc() {
 				for vk in i32('0') ..= i32('9') {
 					if pressed(&kw, vk) {
 						if slot, ok := vk_to_slot(vk); ok {
-							s.last_slot_ok = select_plant(s.window, slot)
+							s.last_slot_ok = select_plant(&s.window, slot)
 							s.last_slot = slot
 							if s.last_slot_ok {
 								s.slot_flash = 0.35

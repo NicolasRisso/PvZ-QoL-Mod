@@ -1,19 +1,19 @@
 # PvZ GOTY — Speed Up Mod
 
 A tiny speed control for **Plants vs. Zombies: Game of the Year Edition** (Steam).
-Press **SPACE** to cycle 1x → 2x → 3x → Custom.
+Press **ALT** to cycle 1x → 2x → 3x → Custom, and **1**–**9**/**0** to pick a plant.
 
 Written in [Odin](https://odin-lang.org/). No injection, no modified game files.
 
 A small always-on-top panel: pick a speed preset with the mouse or cycle it
-with SPACE, and watch the **measured** rate the game reports back.
+with ALT, and watch the **measured** rate the game reports back.
 
 
 ## Usage
 
 1. Start Plants vs. Zombies.
 2. Run `pvz-speed.exe`. It connects on its own and stays on top.
-3. Click a preset, or press **SPACE** to cycle. The hotkey works while the game
+3. Click a preset, or press **ALT** to cycle. The hotkey works while the game
    is focused — you do not need to alt-tab back to the panel.
 4. Press **1**–**9** or **0** in game to pick that seed packet.
 
@@ -30,12 +30,20 @@ the game is actually running at, not merely what was requested. If you ask for
 
 ## How it works
 
-The game is the PopCap SexyApp Framework, whose update loop is paced by a speed
-multiplier field on the main app object. The tool resolves that object through a
-static global and writes one 8-byte `f64`.
+**Speed** — the game is the PopCap SexyApp Framework, whose update loop is paced
+by a speed multiplier field on the main app object. The tool resolves that object
+through a static global and writes one 8-byte `f64`.
 
-That's the entire mod. It does not modify any game file, inject any DLL, or
-patch any code — it writes a single number the engine already reads every frame.
+**Plant selection** — the tool posts `WM_MOUSEMOVE` + `WM_LBUTTONDOWN` +
+`WM_LBUTTONUP` directly to the game's window handle at the packet's coordinates,
+then posts a final move back to where your real cursor is. **Your mouse never
+moves.** Because the messages are addressed to a window rather than to a screen
+position, they cannot reach any other application, and it does not matter what is
+stacked on top of the game.
+
+Neither half modifies a game file, injects a DLL, or patches any code. The speed
+control writes a single number the engine already reads every frame; plant
+selection sends the same window messages a real click would.
 
 Because it only sets a value the engine uses natively, everything stays in sync:
 plant cooldowns, zombie movement, sun production, and animations all scale
@@ -74,9 +82,15 @@ The tool is a normal 64-bit program that reads and writes the memory of the
 
 ## Caveats
 
-- **SPACE is polled globally.** The hotkey fires no matter which window is
-  focused, which is what makes it usable mid-game — but it also means pressing
-  space in another application will cycle the speed.
+- **ALT is polled globally.** The speed hotkey fires no matter which window is
+  focused, which is what makes it usable mid-game — but it also means Alt+Tab
+  will cycle the speed as a side effect. (SPACE is deliberately not used: it
+  pauses the game.)
+- **Plant selection requires the game to be the foreground window**, so typing
+  digits in another application cannot change your selection.
+- **Conveyor-belt levels are not supported.** Those levels have no fixed seed
+  bank — packets slide along a belt — so the number keys will hit whatever
+  happens to be at that position, or nothing.
 - Very high multipliers may make the game unstable or unplayable. 1x–4x is the
   comfortable range.
 - Single-player only. This is an offline game; there is nothing to cheat against
