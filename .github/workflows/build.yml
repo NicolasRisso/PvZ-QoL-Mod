@@ -22,7 +22,7 @@ jobs:
         run: odin check src -vet
 
       - name: Build
-        run: odin build src -out:pvz-speed.exe -o:speed
+        run: odin build src -out:pvz-speed.exe -o:speed -extra-linker-flags:"/FORCE:MULTIPLE"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

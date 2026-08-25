@@ -5,32 +5,24 @@ Press **SPACE** to cycle 1x → 2x → 3x → Custom.
 
 Written in [Odin](https://odin-lang.org/). No injection, no modified game files.
 
-```
-  PvZ GOTY - Speed Up Mod
-  ------------------------------------
+A small always-on-top panel: pick a speed preset with the mouse or cycle it
+with SPACE, and watch the **measured** rate the game reports back.
 
- > 1x       1.00x
-   2x       2.00x
-   3x       3.00x
-   Custom   5.00x
-
-  connected  pid 18692
-  measured: 100 updates/sec  (1.00x)
-
-  ------------------------------------
-  SPACE  cycle speed
-  C      set custom value
-  Q      quit (restores 1x)
-```
 
 ## Usage
 
 1. Start Plants vs. Zombies.
-2. Run `pvz-speed.exe`.
-3. Press **SPACE** to cycle speeds. It works while the game is focused — you do
-   not need to alt-tab back to the console.
+2. Run `pvz-speed.exe`. It connects on its own and stays on top.
+3. Click a preset, or press **SPACE** to cycle. The hotkey works while the game
+   is focused — you do not need to alt-tab back to the panel.
+4. Press **1**–**9** or **0** in game to pick that seed packet.
 
-`C` sets the custom multiplier (0.1–100). `Q` or `Esc` quits and restores 1x.
+Type into the **custom** box for any multiplier from 1x to 100x. Closing the
+window restores the game to 1x.
+
+Hotkeys are polled globally, so they work with the game focused. Plant
+selection additionally requires the game to be the foreground window — see
+Caveats.
 
 The **measured** line reads the game's own update counter, so it shows the rate
 the game is actually running at, not merely what was requested. If you ask for
@@ -66,10 +58,16 @@ re-derive them for another build.
 ## Building
 
 Requires [Odin](https://odin-lang.org/docs/install/) (targets `windows_amd64`).
+raylib and raygui ship with Odin and link statically, so the result is a single
+self-contained exe with no DLLs to distribute.
 
 ```
-odin build src -out:pvz-speed.exe -o:speed
+odin build src -out:pvz-speed.exe -o:speed -extra-linker-flags:"/FORCE:MULTIPLE"
 ```
+
+`/FORCE:MULTIPLE` is required: raylib and user32 both export a symbol named
+`CloseWindow`, so linking raylib alongside the Win32 API is otherwise a
+duplicate-symbol error. See the note in `src/main.odin`.
 
 The tool is a normal 64-bit program that reads and writes the memory of the
 32-bit game process. Nothing runs inside the game.
