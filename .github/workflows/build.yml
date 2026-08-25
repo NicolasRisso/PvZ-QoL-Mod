@@ -7,6 +7,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+  id-token: write # required for build provenance attestation
+  attestations: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -24,15 +29,64 @@ jobs:
       - name: Build
         run: odin build src -out:pvz-speed.exe -o:speed -extra-linker-flags:"/FORCE:MULTIPLE"
 
+      # --- Code signing -------------------------------------------------------
+      # Runs only once the Azure Trusted Signing secrets exist, so forks and
+      # unsigned builds still succeed. A self-signed certificate is deliberately
+      # NOT used: Windows does not trust one, so it removes no warning at all.
+      - name: Check for signing credentials
+        id: signing
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.AZURE_CLIENT_ID }}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "No signing credentials configured - producing an unsigned build."
+          fi
+
+      - name: Sign
+        if: steps.signing.outputs.enabled == 'true'
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_CODE_SIGNING_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      # --- Verifiability ------------------------------------------------------
+      # Free, and worth more than a signature to a technical audience: anyone can
+      # confirm the released exe was produced by this workflow from this source.
+      - name: Attest build provenance
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: pvz-speed.exe
+
+      - name: Checksum
+        shell: bash
+        run: |
+          sha256sum pvz-speed.exe | tee SHA256SUMS.txt
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: pvz-speed
-          path: pvz-speed.exe
+          path: |
+            pvz-speed.exe
+            SHA256SUMS.txt
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: pvz-speed.exe
+          files: |
+            pvz-speed.exe
+            SHA256SUMS.txt
           generate_release_notes: true

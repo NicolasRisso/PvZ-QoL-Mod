@@ -99,8 +99,21 @@ The tool is a normal 64-bit program that reads and writes the memory of the
   comfortable range.
 - Single-player only. This is an offline game; there is nothing to cheat against
   but yourself.
-- Because it writes to another process's memory, some antivirus software may
-  flag it. The full source is here.
+- **Some antivirus software will flag this.** The tool reads and writes another
+  process's memory and synthesises input — that is the behaviour signature of a
+  game trainer, because it is one. Signing the binary does not change that; see
+  [docs/SIGNING.md](docs/SIGNING.md). The full source is here, and every release
+  is built in public CI.
+
+## Verifying a download
+
+Every release ships `SHA256SUMS.txt`, and tagged builds carry a GitHub build
+provenance attestation — cryptographic proof the binary came from this
+repository's workflow rather than someone's machine:
+
+```
+gh attestation verify pvz-speed.exe --repo <owner>/<repo>
+```
 
 ## Legal
 
