@@ -16,6 +16,8 @@ with ALT, and watch the **measured** rate the game reports back.
 3. Click a preset, or press **ALT** to cycle. The hotkey works while the game
    is focused — you do not need to alt-tab back to the panel.
 4. Press **1**–**9** or **0** in game to pick that seed packet.
+5. Press **X** for the shovel. Set **level has N plants** in the panel so the
+   tool knows where the shovel sits (it is one slot past your last packet).
 
 Type into the **custom** box for any multiplier from 1x to 100x. Closing the
 window restores the game to 1x.
@@ -82,10 +84,12 @@ The tool is a normal 64-bit program that reads and writes the memory of the
 
 ## Caveats
 
-- **ALT is polled globally.** The speed hotkey fires no matter which window is
-  focused, which is what makes it usable mid-game — but it also means Alt+Tab
-  will cycle the speed as a side effect. (SPACE is deliberately not used: it
-  pauses the game.)
+- **ALT cycles speed only while the game is the foreground window**, and only on
+  a clean tap — holding Alt and pressing another key (Alt+Tab) is ignored.
+  SPACE is deliberately not used: it pauses the game.
+- The tool ignores ALT for the first few seconds after launch. GLFW synthesises
+  an ALT keypress when it tries to focus its own window, and without the settle
+  window that would cycle the speed before you touched anything.
 - **Plant selection requires the game to be the foreground window**, so typing
   digits in another application cannot change your selection.
 - **Conveyor-belt levels are not supported.** Those levels have no fixed seed

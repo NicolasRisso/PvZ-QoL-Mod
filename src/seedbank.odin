@@ -39,7 +39,28 @@ SEED_CENTER_Y :: 42.0
 DESIGN_W :: 800.0
 DESIGN_H :: 600.0
 
+// PvZ tops out at 10 seed slots (with Imitater), and the shovel sits one pitch
+// past the last packet - so index 10 is reachable when all 10 are in use.
 MAX_SEED_SLOTS :: 10
+MAX_SLOT_INDEX :: 10
+
+// The shovel is not part of the seed bank, but the bank widens with each packet
+// and the shovel is anchored just past its right edge - so it lands almost
+// exactly one pitch beyond the last card.
+//
+// Verified at 6 plants: slot index 6 -> x=473, inside the shovel panel
+// (which spans x 458..533). Clicking there changes the shovel and leaves the
+// last card untouched.
+//
+// This is why the plant count has to be supplied: without knowing how many
+// packets the level gave you, we cannot know where the bank ends.
+shovel_index :: proc(plant_count: int) -> int {
+	return clamp(plant_count, 0, MAX_SLOT_INDEX)
+}
+
+select_shovel :: proc(info: ^Window_Info, plant_count: int) -> bool {
+	return select_plant(info, shovel_index(plant_count))
+}
 
 Window_Info :: struct {
 	hwnd:     win.HWND,
@@ -137,7 +158,7 @@ MK_LBUTTON :: 0x0001
 
 // Select seed packet `index` (0-based) without moving the physical cursor.
 select_plant :: proc(info: ^Window_Info, index: int) -> bool {
-	if index < 0 || index >= MAX_SEED_SLOTS {
+	if index < 0 || index > MAX_SLOT_INDEX {
 		return false
 	}
 	if !game_is_focused(info^) {

@@ -209,3 +209,36 @@ pointer.
 are still received and the coordinate is stored, but no widget reacts. Any
 calibration attempt against an unfocused *or paused* game will find nothing.
 Check both before concluding the approach does not work.
+
+
+# Shovel
+
+The shovel is not part of the seed bank, but the bank widens with each packet
+and the shovel is anchored just past its right edge - so it lands almost exactly
+**one pitch beyond the last card**. Its slot index is therefore the plant count.
+
+Verified at 6 plants: index 6 -> x=473, inside the shovel panel (x 458..533).
+Clicking there changes the shovel and leaves the last card untouched.
+
+This is why the plant count has to be supplied by the user: without knowing how
+many packets the level handed out, we cannot know where the bank ends. Reading
+the packet count from memory would remove that step and is the obvious follow-up.
+
+# ALT as a hotkey: GLFW's synthetic keypress
+
+GLFW synthesises an ALT keypress whenever it focuses its own window - the
+documented Windows workaround for SetForegroundWindow restrictions. A global
+GetAsyncKeyState poll cannot distinguish it from a real tap, so it cycled the
+speed at launch.
+
+Things tried that did **not** work:
+
+- Priming the key state on the first poll. The synthetic press lands a frame or
+  two after the loop starts, not before it.
+- Suppressing on our own window gaining focus. If the game already holds
+  foreground, GLFW's focus attempt *fails* - so `IsWindowFocused()` never flips
+  and the suppression never arms, while the synthetic ALT is emitted anyway.
+
+What works: a flat settle window (~4 s of frames) during which ALT is ignored
+outright, plus fire-on-release-only, suppressed if another key went down during
+the hold (which handles Alt+Tab).

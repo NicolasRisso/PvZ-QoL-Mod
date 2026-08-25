@@ -27,10 +27,12 @@ State :: struct {
 	last_slot:    int,
 	last_slot_ok: bool,
 	slot_flash:   f32, // fades out after a plant key is pressed
+	plant_count:  i32, // packets this level gave you; locates the shovel
+	shovel_flash: f32,
 }
 
 WIN_W :: 360
-WIN_H :: 452
+WIN_H :: 496
 
 // Palette - loosely PvZ-ish without imitating any game art.
 COL_BG :: rl.Color{24, 28, 24, 255}
@@ -85,23 +87,96 @@ update_measurement :: proc(s: ^State) {
 
 Key_Watch :: struct {
 	was_down: map[i32]bool,
+	primed:   bool, // first poll only records state, it must not fire
+}
+
+// ALT needs more care than a plain edge trigger, for two reasons:
+//
+//  1. GLFW synthesises an ALT keypress when it focuses its own window - that is
+//     the documented Windows trick for getting around SetForegroundWindow
+//     restrictions. A naive global poll sees it as a real tap, so merely
+//     clicking this panel would cycle the game speed.
+//  2. Alt+Tab would otherwise cycle the speed on the way out of the game.
+//
+// So: fire on ALT *release*, only if no other key was pressed during the hold,
+// and only while the game itself is the foreground window. The synthetic press
+// happens while our window is taking focus, so the game is not foreground and
+// it is ignored.
+Alt_Watch :: struct {
+	down:           bool,
+	dirty:          bool, // another key went down during this hold
+	primed:         bool,
+	was_focused:  bool,
+	settle_frames: int, // frames left to ignore ALT entirely
+}
+
+// GLFW synthesises an ALT press whenever it focuses its own window (the Windows
+// SetForegroundWindow workaround). It lands a frame or two after the loop
+// starts, so priming alone does not catch it. Whenever our panel gains focus,
+// blank out ALT briefly - a real user tap that close to a focus change is not
+// something worth honouring anyway.
+alt_note_focus :: proc(aw: ^Alt_Watch, focused_now: bool) {
+	if focused_now && !aw.was_focused {
+		aw.settle_frames = max(aw.settle_frames, 48)
+	}
+	aw.was_focused = focused_now
+}
+
+alt_tapped :: proc(aw: ^Alt_Watch, game_focused: bool) -> bool {
+	down := (u16(win.GetAsyncKeyState(win.VK_MENU)) & 0x8000) != 0
+	defer aw.down = down
+
+	if !aw.primed {
+		aw.primed = true
+		// A hold already in progress at startup is by definition not the user's.
+		aw.dirty = true
+		return false
+	}
+	if aw.settle_frames > 0 {
+		aw.settle_frames -= 1
+		aw.dirty = true // whatever happens during the blackout is not a tap
+		return false
+	}
+	if down && !aw.down {
+		aw.dirty = false // start of a fresh hold
+		return false
+	}
+	if down {
+		// Any companion key (Tab being the one that matters) disqualifies it.
+		if (u16(win.GetAsyncKeyState(win.VK_TAB)) & 0x8000) != 0 {
+			aw.dirty = true
+		}
+		return false
+	}
+	if !down && aw.down {
+		return !aw.dirty && game_focused
+	}
+	return false
 }
 
 // Edge-triggered, polled globally so the hotkeys work while the game has focus.
+//
+// `primed` matters more than it looks: without it the very first poll sees an
+// empty map, so prev is false, and any key already held down at launch fires
+// instantly. Launching the tool with Alt+Tab would cycle the speed before the
+// user touched anything.
 pressed :: proc(kw: ^Key_Watch, vk: i32) -> bool {
 	down := (u16(win.GetAsyncKeyState(vk)) & 0x8000) != 0
-	prev := kw.was_down[vk]
+	prev, seen := kw.was_down[vk]
 	kw.was_down[vk] = down
+	if !seen || !kw.primed {
+		return false
+	}
 	return down && !prev
 }
 
 // Hotkeys must not fire while the user is typing into our own custom-speed box,
 // otherwise ALT/digits would act on the game instead of the text field.
-typing_in_gui :: proc(edit_mode: bool) -> bool {
-	return edit_mode && rl.IsWindowFocused()
+typing_in_gui :: proc(edit_mode: bool, count_edit: bool) -> bool {
+	return (edit_mode || count_edit) && rl.IsWindowFocused()
 }
 
-draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool) {
+draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool, count_edit: ^bool) {
 	rl.ClearBackground(COL_BG)
 
 	// --- header ---
@@ -200,25 +275,56 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool) {
 	if !s.have_window {
 		rl.DrawText("no game window", 14, y, 14, COL_WARN)
 	} else {
-		rl.DrawText("press 1-9, 0 in game", 14, y, 14, COL_TEXT)
-		// Slot pips, flashing the one most recently pressed.
-		for i in 0 ..< MAX_SEED_SLOTS {
-			px := f32(14 + i * 33)
-			r := rl.Rectangle{px, f32(y + 22), 28, 22}
+		// How many packets this level gave you. The shovel sits one slot past
+		// the last packet, so this is what tells us where to find it.
+		rl.DrawText("level has", 14, y + 5, 13, COL_MUTED)
+		cbox := rl.Rectangle{84, f32(y), 46, 24}
+		if rl.GuiValueBox(cbox, "", &s.plant_count, 1, 10, count_edit^) != 0 {
+			count_edit^ = !count_edit^
+		}
+		rl.DrawText("plants", 136, y + 5, 13, COL_MUTED)
+
+		shovel_key := int(s.plant_count) + 1
+		if shovel_key <= 10 {
+			rl.DrawText(
+				fmt.ctprintf("shovel = X or %d", shovel_key == 10 ? 0 : shovel_key),
+				190,
+				y + 5,
+				13,
+				COL_ACCENT,
+			)
+		} else {
+			rl.DrawText("shovel = X", 190, y + 5, 13, COL_ACCENT)
+		}
+
+		y += 32
+		// One pip per packet, plus a shovel pip in the slot just past them.
+		n := int(s.plant_count)
+		for i in 0 ..< n {
+			px := f32(14 + i * 31)
+			r := rl.Rectangle{px, f32(y), 26, 22}
 			hot := s.last_slot_ok && s.last_slot == i && s.slot_flash > 0
-			col := hot ? COL_ACCENT : COL_PANEL
-			rl.DrawRectangleRec(r, col)
+			rl.DrawRectangleRec(r, hot ? COL_ACCENT : COL_PANEL)
 			label := fmt.ctprintf("%d", i == 9 ? 0 : i + 1)
 			tw := rl.MeasureText(label, 13)
-			rl.DrawText(label, i32(px + (28 - f32(tw)) / 2), y + 27, 13, hot ? COL_BG : COL_MUTED)
+			rl.DrawText(label, i32(px + (26 - f32(tw)) / 2), y + 5, 13, hot ? COL_BG : COL_MUTED)
+		}
+		sx := f32(14 + n * 31)
+		if sx + 26 <= WIN_W - 14 {
+			sr := rl.Rectangle{sx, f32(y), 26, 22}
+			shot := s.shovel_flash > 0
+			rl.DrawRectangleRec(sr, shot ? COL_ACCENT : COL_PANEL)
+			rl.DrawRectangleLinesEx(sr, 1, COL_ACCENT_DIM)
+			tw := rl.MeasureText("X", 13)
+			rl.DrawText("X", i32(sx + (26 - f32(tw)) / 2), y + 5, 13, shot ? COL_BG : COL_ACCENT)
 		}
 	}
 
 	// --- footer ---
 	fy: i32 = WIN_H - 46
 	rl.DrawLine(14, fy - 10, WIN_W - 14, fy - 10, COL_PANEL)
-	rl.DrawText("ALT cycle speed    1-9,0 pick plant", 14, fy, 12, COL_MUTED)
-	rl.DrawText("hotkeys work while the game is focused", 14, fy + 16, 12, COL_MUTED)
+	rl.DrawText("ALT speed   1-9,0 plant   X shovel", 14, fy, 12, COL_MUTED)
+	rl.DrawText("hotkeys act only while the game is focused", 14, fy + 16, 12, COL_MUTED)
 }
 
 main :: proc() {
@@ -239,14 +345,24 @@ main :: proc() {
 	s: State
 	s.steps = [4]Step{{"1x", 1.0}, {"2x", 2.0}, {"3x", 3.0}, {"Custom", 5.0}}
 	s.custom = 5.0
+	s.plant_count = 6
 	s.status = "waiting for Plants vs. Zombies..."
 
 	custom_box: i32 = 5
 	edit_mode := false
+	count_edit := false
 
 	kw: Key_Watch
 	kw.was_down = make(map[i32]bool)
 	defer delete(kw.was_down)
+
+	aw: Alt_Watch
+	// Blank out ALT for the first couple of seconds. GLFW emits its synthetic
+	// ALT a frame or two into the run, and if the game already holds foreground
+	// GLFW's focus attempt fails - so IsWindowFocused() never flips and a
+	// focus-triggered suppression never arms. A flat settle window is the only
+	// thing that reliably covers it.
+	aw.settle_frames = 240 // ~4s at 60fps
 
 	reattach_at := time.tick_now()
 
@@ -265,9 +381,14 @@ main :: proc() {
 			reattach_at = time.tick_add(time.tick_now(), 1 * time.Second)
 		}
 
-		if !typing_in_gui(edit_mode) {
+		if !typing_in_gui(edit_mode, count_edit) {
 			// ALT, not SPACE: space pauses Plants vs. Zombies.
-			if pressed(&kw, win.VK_MENU) {
+			// Game focus only. Accepting our own panel's focus as well was tried
+			// and reverted: GLFW's synthetic ALT fires precisely while the panel
+			// is taking focus, so that reopened the spurious-cycle bug.
+			alt_note_focus(&aw, bool(rl.IsWindowFocused()))
+			focused := s.have_window && game_is_focused(s.window)
+			if alt_tapped(&aw, focused) {
 				s.index = (s.index + 1) % len(s.steps)
 				apply_current(&s)
 			}
@@ -283,11 +404,23 @@ main :: proc() {
 						}
 					}
 				}
+				// X picks the shovel: it sits one pitch past the last packet,
+				// so its slot index is exactly the plant count.
+				if pressed(&kw, 'X') {
+					if select_shovel(&s.window, int(s.plant_count)) {
+						s.shovel_flash = 0.35
+					}
+				}
 			}
 		}
 
+		kw.primed = true
+
 		if s.slot_flash > 0 {
 			s.slot_flash -= rl.GetFrameTime()
+		}
+		if s.shovel_flash > 0 {
+			s.shovel_flash -= rl.GetFrameTime()
 		}
 
 		// Detect the game going away.
@@ -303,7 +436,7 @@ main :: proc() {
 		update_measurement(&s)
 
 		rl.BeginDrawing()
-		draw_ui(&s, &custom_box, &edit_mode)
+		draw_ui(&s, &custom_box, &edit_mode, &count_edit)
 		rl.EndDrawing()
 
 		free_all(context.temp_allocator)
