@@ -57,4 +57,36 @@ EXPECTED_FRAME_TIME :: i32(10)
 // effective rate so the tool can verify a speed change actually took effect.
 OFF_UPDATE_COUNT :: uintptr(0x4E4)
 
+// Active Board pointer in LawnApp. This GOTY build's LawnApp is 0x100 bytes
+// larger than the older 1.0.0.1051 layout commonly documented online.
+OFF_BOARD :: uintptr(0x868)
+
+// --- Board / DataArray<Coin> ----------------------------------------------
+
+// Board gained 0x18 bytes in this GOTY build relative to the old layout:
+// mApp is +0xA4 and mCoins begins at +0xFC.
+OFF_BOARD_APP :: uintptr(0xA4)
+OFF_BOARD_COINS :: uintptr(0xFC)       // DataArray<Coin>::mData
+OFF_BOARD_COIN_MAX_USED :: uintptr(0x100)
+OFF_BOARD_CURSOR :: uintptr(0x150)
+OFF_BOARD_SEED_BANK :: uintptr(0x15C)
+
+COIN_STRIDE :: uintptr(0xD8)           // sizeof(Coin) + DataArray item metadata
+OFF_COIN_X :: uintptr(0x24)
+OFF_COIN_Y :: uintptr(0x28)
+OFF_COIN_DEAD :: uintptr(0x38)
+OFF_COIN_COLLECTING :: uintptr(0x50)
+OFF_COIN_TYPE :: uintptr(0x58)
+
+OFF_OBJECT_WIDTH :: uintptr(0x10)
+OFF_OBJECT_HEIGHT :: uintptr(0x14)
+
+// CursorObject::mCursorType. Zero is CURSOR_TYPE_NORMAL (empty hand).
+OFF_CURSOR_TYPE :: uintptr(0x30)
+CURSOR_TYPE_NORMAL :: i32(0)
+
+OFF_SEED_BANK_NUM_PACKETS :: uintptr(0x24)
+
+MAX_COIN_ENTRIES :: u32(1024)
+
 BASE_UPDATE_RATE :: 100.0

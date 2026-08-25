@@ -44,6 +44,24 @@ DESIGN_H :: 600.0
 MAX_SEED_SLOTS :: 10
 MAX_SLOT_INDEX :: 10
 
+// Read the active level's packet count directly from SeedBank. Between levels
+// there is no Board/SeedBank, so callers retain an explicit validity flag.
+get_seed_slot_count :: proc(g: ^Game) -> (count: i32, ok: bool) {
+	board, board_ok := resolve_board(g)
+	if !board_ok {
+		return 0, false
+	}
+	seed_bank_ptr, ptr_ok := read_u32(g, board + OFF_BOARD_SEED_BANK)
+	if !ptr_ok || seed_bank_ptr == 0 {
+		return 0, false
+	}
+	n, count_ok := read_i32(g, uintptr(seed_bank_ptr) + OFF_SEED_BANK_NUM_PACKETS)
+	if !count_ok || n < 1 || n > MAX_SEED_SLOTS {
+		return 0, false
+	}
+	return n, true
+}
+
 // The shovel is not part of the seed bank, but the bank widens with each packet
 // and the shovel is anchored just past its right edge - so it lands almost
 // exactly one pitch beyond the last card.
@@ -52,8 +70,8 @@ MAX_SLOT_INDEX :: 10
 // (which spans x 458..533). Clicking there changes the shovel and leaves the
 // last card untouched.
 //
-// This is why the plant count has to be supplied: without knowing how many
-// packets the level gave you, we cannot know where the bank ends.
+// The packet count is read from the live SeedBank, so this remains correct as
+// adventure levels grant more slots and when extra slots are purchased.
 shovel_index :: proc(plant_count: int) -> int {
 	return clamp(plant_count, 0, MAX_SLOT_INDEX)
 }
@@ -171,6 +189,23 @@ select_plant :: proc(info: ^Window_Info, index: int) -> bool {
 	}
 
 	cx, cy := packet_point(info^, index)
+	return click_client_point(info, cx, cy)
+}
+
+// Click a point in the game's current client coordinate system without moving
+// the physical cursor. Shared by packet selection and collectible pickup.
+click_client_point :: proc(info: ^Window_Info, cx, cy: i32) -> bool {
+	if !game_is_focused(info^) {
+		return false
+	}
+
+	if updated, ok := refresh_window(info.hwnd); ok {
+		info^ = updated
+	}
+	if cx < 0 || cy < 0 || cx >= info.client_w || cy >= info.client_h {
+		return false
+	}
+
 	restore, have_restore := cursor_in_client(info.hwnd)
 
 	post_at(info.hwnd, win.WM_MOUSEMOVE, 0, cx, cy)
@@ -184,6 +219,16 @@ select_plant :: proc(info: ^Window_Info, index: int) -> bool {
 		post_at(info.hwnd, win.WM_MOUSEMOVE, 0, restore.x, restore.y)
 	}
 	return true
+}
+
+// Click an 800x600 design-space point, scaled to the live client size.
+click_design_point :: proc(info: ^Window_Info, x, y: f32) -> bool {
+	if updated, ok := refresh_window(info.hwnd); ok {
+		info^ = updated
+	}
+	cx := i32(f64(x) * f64(info.client_w) / DESIGN_W + 0.5)
+	cy := i32(f64(y) * f64(info.client_h) / DESIGN_H + 0.5)
+	return click_client_point(info, cx, cy)
 }
 
 // Map a virtual-key code to a seed slot index. 1-9 -> 0-8, 0 -> 9.

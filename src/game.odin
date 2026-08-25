@@ -78,6 +78,22 @@ read_i32 :: proc(g: ^Game, addr: uintptr) -> (v: i32, ok: bool) {
 	return (^i32)(raw_data(buf[:]))^, true
 }
 
+read_u8 :: proc(g: ^Game, addr: uintptr) -> (v: u8, ok: bool) {
+	buf: [1]u8
+	if !read_raw(g, addr, buf[:]) {
+		return 0, false
+	}
+	return buf[0], true
+}
+
+read_f32 :: proc(g: ^Game, addr: uintptr) -> (v: f32, ok: bool) {
+	buf: [4]u8
+	if !read_raw(g, addr, buf[:]) {
+		return 0, false
+	}
+	return (^f32)(raw_data(buf[:]))^, true
+}
+
 read_f64 :: proc(g: ^Game, addr: uintptr) -> (v: f64, ok: bool) {
 	buf: [8]u8
 	if !read_raw(g, addr, buf[:]) {

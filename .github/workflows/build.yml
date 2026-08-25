@@ -27,7 +27,7 @@ jobs:
         run: odin check src -vet
 
       - name: Build
-        run: odin build src -out:pvz-speed.exe -o:speed -extra-linker-flags:"/FORCE:MULTIPLE"
+        run: odin build src -out:pvz-qol-mod.exe -o:speed -extra-linker-flags:"/FORCE:MULTIPLE"
 
       # --- Code signing -------------------------------------------------------
       # Runs only once the Azure Trusted Signing secrets exist, so forks and
@@ -67,19 +67,19 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: pvz-speed.exe
+          subject-path: pvz-qol-mod.exe
 
       - name: Checksum
         shell: bash
         run: |
-          sha256sum pvz-speed.exe | tee SHA256SUMS.txt
+          sha256sum pvz-qol-mod.exe | tee SHA256SUMS.txt
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pvz-speed
+          name: pvz-qol-mod
           path: |
-            pvz-speed.exe
+            pvz-qol-mod.exe
             SHA256SUMS.txt
 
       - name: Release
@@ -87,6 +87,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            pvz-speed.exe
+            pvz-qol-mod.exe
             SHA256SUMS.txt
           generate_release_notes: true

@@ -220,9 +220,15 @@ and the shovel is anchored just past its right edge - so it lands almost exactly
 Verified at 6 plants: index 6 -> x=473, inside the shovel panel (x 458..533).
 Clicking there changes the shovel and leaves the last card untouched.
 
-This is why the plant count has to be supplied by the user: without knowing how
-many packets the level handed out, we cannot know where the bank ends. Reading
-the packet count from memory would remove that step and is the obvious follow-up.
+The count is now read directly from the live SeedBank:
+
+```
+Board+0x15C -> SeedBank
+SeedBank+0x24 = mNumPackets
+```
+
+The panel displays the detected value and X uses it as the shovel slot index,
+so no per-level configuration is required.
 
 # ALT as a hotkey: GLFW's synthetic keypress
 

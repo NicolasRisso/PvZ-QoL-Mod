@@ -27,12 +27,20 @@ State :: struct {
 	last_slot:    int,
 	last_slot_ok: bool,
 	slot_flash:   f32, // fades out after a plant key is pressed
-	plant_count:  i32, // packets this level gave you; locates the shovel
+	plant_count:  i32, // read from the live SeedBank; locates the shovel
+	have_seed_count: bool,
 	shovel_flash: f32,
+	auto_collect: bool,
+	collect_flash: f32,
+	next_collect: time.Tick,
 }
 
 WIN_W :: 360
-WIN_H :: 496
+WIN_H :: 566
+
+// Packet selection is posted asynchronously. Give PvZ time to consume that
+// click and update CursorObject before auto-collect trusts the memory gate.
+COLLECT_INPUT_GRACE :: 350 * time.Millisecond
 
 // Palette - loosely PvZ-ish without imitating any game art.
 COL_BG :: rl.Color{24, 28, 24, 255}
@@ -43,6 +51,22 @@ COL_TEXT :: rl.Color{226, 232, 222, 255}
 COL_MUTED :: rl.Color{130, 142, 128, 255}
 COL_WARN :: rl.Color{226, 178, 64, 255}
 COL_BAD :: rl.Color{214, 96, 84, 255}
+
+PROJECT_URL :: "https://github.com/NicolasRisso/PvZ-QoL-Mod"
+
+// Roboto is embedded into the executable so the UI has consistent typography
+// without shipping a sidecar font file. See assets/OFL-Roboto.txt.
+ROBOTO_DATA :: #load("../assets/Roboto.ttf")
+ui_font: rl.Font
+
+draw_text :: proc(text: cstring, x, y, font_size: i32, color: rl.Color) {
+	rl.DrawTextEx(ui_font, text, rl.Vector2{f32(x), f32(y)}, f32(font_size), 0.25, color)
+}
+
+measure_text :: proc(text: cstring, font_size: i32) -> i32 {
+	size := rl.MeasureTextEx(ui_font, text, f32(font_size), 0.25)
+	return i32(size.x + 0.5)
+}
 
 current_step :: proc(s: ^State) -> Step {
 	st := s.steps[s.index]
@@ -172,31 +196,40 @@ pressed :: proc(kw: ^Key_Watch, vk: i32) -> bool {
 
 // Hotkeys must not fire while the user is typing into our own custom-speed box,
 // otherwise ALT/digits would act on the game instead of the text field.
-typing_in_gui :: proc(edit_mode: bool, count_edit: bool) -> bool {
-	return (edit_mode || count_edit) && rl.IsWindowFocused()
+typing_in_gui :: proc(edit_mode: bool) -> bool {
+	return edit_mode && rl.IsWindowFocused()
 }
 
-draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool, count_edit: ^bool) {
+draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool) {
 	rl.ClearBackground(COL_BG)
 
 	// --- header ---
 	rl.DrawRectangle(0, 0, WIN_W, 42, COL_PANEL)
-	rl.DrawText("PvZ Speed Mod", 14, 13, 20, COL_ACCENT)
+	draw_text("PvZ QoL Mod", 14, 13, 20, COL_ACCENT)
+	author: cstring = "by: Nicolas Risso"
+	author_w := measure_text(author, 12)
+	author_x := WIN_W - 14 - author_w
+	author_rect := rl.Rectangle{f32(author_x - 3), 10, f32(author_w + 6), 22}
+	author_hover := rl.CheckCollisionPointRec(rl.GetMousePosition(), author_rect)
+	draw_text(author, author_x, 16, 12, author_hover ? COL_TEXT : COL_MUTED)
+	if author_hover && rl.IsMouseButtonPressed(.LEFT) {
+		rl.OpenURL(PROJECT_URL)
+	}
 
 	// --- connection status ---
 	y: i32 = 52
 	if s.connected {
 		rl.DrawCircle(22, y + 8, 5, COL_ACCENT)
 		txt := fmt.ctprintf("connected  -  pid %d", s.game.pid)
-		rl.DrawText(txt, 36, y, 14, COL_TEXT)
+		draw_text(txt, 36, y, 14, COL_TEXT)
 	} else {
 		rl.DrawCircle(22, y + 8, 5, COL_WARN)
-		rl.DrawText(strings.clone_to_cstring(s.status, context.temp_allocator), 36, y, 14, COL_WARN)
+		draw_text(strings.clone_to_cstring(s.status, context.temp_allocator), 36, y, 14, COL_WARN)
 	}
 
 	// --- speed presets ---
 	y = 84
-	rl.DrawText("SPEED", 14, y, 12, COL_MUTED)
+	draw_text("SPEED", 14, y, 12, COL_MUTED)
 	y += 20
 
 	bw: f32 = (WIN_W - 28 - 3 * 6) / 4
@@ -212,8 +245,8 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool, count_edit: ^bool
 		if i == len(s.steps) - 1 {
 			label = fmt.ctprintf("%.4gx", s.custom)
 		}
-		tw := rl.MeasureText(label, 16)
-		rl.DrawText(
+		tw := measure_text(label, 16)
+		draw_text(
 			label,
 			i32(x + (bw - f32(tw)) / 2),
 			y + 11,
@@ -231,7 +264,7 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool, count_edit: ^bool
 
 	// --- custom value ---
 	y += 48
-	rl.DrawText("custom", 14, y + 6, 13, COL_MUTED)
+	draw_text("custom", 14, y + 6, 13, COL_MUTED)
 	box := rl.Rectangle{72, f32(y), 76, 26}
 	if rl.GuiValueBox(box, "", custom_box, 1, 100, edit_mode^) != 0 {
 		edit_mode^ = !edit_mode^
@@ -242,16 +275,16 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool, count_edit: ^bool
 			apply_current(s)
 		}
 	}
-	rl.DrawText("x   (1 - 100)", 156, y + 6, 13, COL_MUTED)
+	draw_text("x   (1 - 100)", 156, y + 6, 13, COL_MUTED)
 
 	// --- measured rate ---
 	y += 44
-	rl.DrawText("MEASURED", 14, y, 12, COL_MUTED)
+	draw_text("MEASURED", 14, y, 12, COL_MUTED)
 	y += 20
 	if s.connected && s.measured > 0 {
 		ratio := s.measured / BASE_UPDATE_RATE
-		rl.DrawText(fmt.ctprintf("%.2fx", ratio), 14, y, 28, COL_ACCENT)
-		rl.DrawText(fmt.ctprintf("%.0f updates/sec", s.measured), 108, y + 10, 14, COL_MUTED)
+		draw_text(fmt.ctprintf("%.2fx", ratio), 14, y, 28, COL_ACCENT)
+		draw_text(fmt.ctprintf("%.0f updates/sec", s.measured), 108, y + 10, 14, COL_MUTED)
 
 		// Bar scaled so 1x sits at a quarter width; caps at 4x.
 		bar := rl.Rectangle{14, f32(y + 40), WIN_W - 28, 8}
@@ -262,31 +295,28 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool, count_edit: ^bool
 			COL_ACCENT,
 		)
 	} else {
-		rl.DrawText("--", 14, y, 28, COL_MUTED)
+		draw_text("--", 14, y, 28, COL_MUTED)
 	}
 
 	// --- plant selection ---
 	y += 68
 	rl.DrawLine(14, y, WIN_W - 14, y, COL_PANEL)
 	y += 12
-	rl.DrawText("PLANTS", 14, y, 12, COL_MUTED)
+	draw_text("PLANTS", 14, y, 12, COL_MUTED)
 	y += 20
 
 	if !s.have_window {
-		rl.DrawText("no game window", 14, y, 14, COL_WARN)
+		draw_text("no game window", 14, y, 14, COL_WARN)
+	} else if !s.have_seed_count {
+		draw_text("reading seed slots...", 14, y, 14, COL_MUTED)
 	} else {
-		// How many packets this level gave you. The shovel sits one slot past
-		// the last packet, so this is what tells us where to find it.
-		rl.DrawText("level has", 14, y + 5, 13, COL_MUTED)
-		cbox := rl.Rectangle{84, f32(y), 46, 24}
-		if rl.GuiValueBox(cbox, "", &s.plant_count, 1, 10, count_edit^) != 0 {
-			count_edit^ = !count_edit^
-		}
-		rl.DrawText("plants", 136, y + 5, 13, COL_MUTED)
+		// The live SeedBank supplies this count. The shovel sits exactly one
+		// packet pitch after the final slot.
+		draw_text(fmt.ctprintf("level has %d plants", s.plant_count), 14, y + 5, 13, COL_MUTED)
 
 		shovel_key := int(s.plant_count) + 1
 		if shovel_key <= 10 {
-			rl.DrawText(
+			draw_text(
 				fmt.ctprintf("shovel = X or %d", shovel_key == 10 ? 0 : shovel_key),
 				190,
 				y + 5,
@@ -294,7 +324,7 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool, count_edit: ^bool
 				COL_ACCENT,
 			)
 		} else {
-			rl.DrawText("shovel = X", 190, y + 5, 13, COL_ACCENT)
+			draw_text("shovel = X", 190, y + 5, 13, COL_ACCENT)
 		}
 
 		y += 32
@@ -306,8 +336,8 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool, count_edit: ^bool
 			hot := s.last_slot_ok && s.last_slot == i && s.slot_flash > 0
 			rl.DrawRectangleRec(r, hot ? COL_ACCENT : COL_PANEL)
 			label := fmt.ctprintf("%d", i == 9 ? 0 : i + 1)
-			tw := rl.MeasureText(label, 13)
-			rl.DrawText(label, i32(px + (26 - f32(tw)) / 2), y + 5, 13, hot ? COL_BG : COL_MUTED)
+			tw := measure_text(label, 13)
+			draw_text(label, i32(px + (26 - f32(tw)) / 2), y + 5, 13, hot ? COL_BG : COL_MUTED)
 		}
 		sx := f32(14 + n * 31)
 		if sx + 26 <= WIN_W - 14 {
@@ -315,21 +345,39 @@ draw_ui :: proc(s: ^State, custom_box: ^i32, edit_mode: ^bool, count_edit: ^bool
 			shot := s.shovel_flash > 0
 			rl.DrawRectangleRec(sr, shot ? COL_ACCENT : COL_PANEL)
 			rl.DrawRectangleLinesEx(sr, 1, COL_ACCENT_DIM)
-			tw := rl.MeasureText("X", 13)
-			rl.DrawText("X", i32(sx + (26 - f32(tw)) / 2), y + 5, 13, shot ? COL_BG : COL_ACCENT)
+			tw := measure_text("X", 13)
+			draw_text("X", i32(sx + (26 - f32(tw)) / 2), y + 5, 13, shot ? COL_BG : COL_ACCENT)
 		}
+	}
+
+	// --- auto collect ---
+	y = 390
+	rl.DrawLine(14, y, WIN_W - 14, y, COL_PANEL)
+	y += 12
+	draw_text("AUTO COLLECT", 14, y, 12, COL_MUTED)
+	y += 20
+	auto_rect := rl.Rectangle{14, f32(y), WIN_W - 28, 38}
+	active_col := s.collect_flash > 0 ? COL_TEXT : COL_BG
+	rl.DrawRectangleRec(auto_rect, s.auto_collect ? COL_ACCENT : COL_PANEL)
+	rl.DrawRectangleLinesEx(auto_rect, 1, s.auto_collect ? COL_ACCENT : COL_ACCENT_DIM)
+	label: cstring = s.auto_collect ? "ON  -  A to disable" : "OFF  -  A to enable"
+	tw := measure_text(label, 15)
+	draw_text(label, i32((WIN_W - f32(tw)) / 2), y + 11, 15, s.auto_collect ? active_col : COL_TEXT)
+	if rl.CheckCollisionPointRec(rl.GetMousePosition(), auto_rect) &&
+	   rl.IsMouseButtonPressed(.LEFT) {
+		s.auto_collect = !s.auto_collect
 	}
 
 	// --- footer ---
 	fy: i32 = WIN_H - 46
 	rl.DrawLine(14, fy - 10, WIN_W - 14, fy - 10, COL_PANEL)
-	rl.DrawText("ALT speed   1-9,0 plant   X shovel", 14, fy, 12, COL_MUTED)
-	rl.DrawText("hotkeys act only while the game is focused", 14, fy + 16, 12, COL_MUTED)
+	draw_text("ALT speed   A collect   1-9,0 plant   X shovel", 14, fy, 12, COL_MUTED)
+	draw_text("hotkeys act only while the game is focused", 14, fy + 16, 12, COL_MUTED)
 }
 
 main :: proc() {
 	rl.SetConfigFlags({.WINDOW_TOPMOST, .VSYNC_HINT})
-	rl.InitWindow(WIN_W, WIN_H, "PvZ Speed Mod")
+	rl.InitWindow(WIN_W, WIN_H, "PvZ QoL Mod")
 	// NOTE: deliberately no rl.CloseWindow().
 	//
 	// raylib and user32 both export a symbol named CloseWindow. We link with
@@ -341,16 +389,23 @@ main :: proc() {
 	rl.SetExitKey(.KEY_NULL) // Esc must not close the window; it is a game key
 
 	rl.GuiLoadStyleDefault()
+	ui_font = rl.LoadFontFromMemory(".ttf", raw_data(ROBOTO_DATA), i32(len(ROBOTO_DATA)), 32, nil, 0)
+	custom_font_loaded := rl.IsFontValid(ui_font)
+	if custom_font_loaded {
+		rl.SetTextureFilter(ui_font.texture, .BILINEAR)
+	} else {
+		ui_font = rl.GetFontDefault()
+	}
+	rl.GuiSetFont(ui_font)
 
 	s: State
 	s.steps = [4]Step{{"1x", 1.0}, {"2x", 2.0}, {"3x", 3.0}, {"Custom", 5.0}}
 	s.custom = 5.0
-	s.plant_count = 6
 	s.status = "waiting for Plants vs. Zombies..."
+	s.next_collect = time.tick_now()
 
 	custom_box: i32 = 5
 	edit_mode := false
-	count_edit := false
 
 	kw: Key_Watch
 	kw.was_down = make(map[i32]bool)
@@ -369,7 +424,7 @@ main :: proc() {
 	for !rl.WindowShouldClose() {
 		// (Re)attach on a timer so the tool survives the game restarting.
 		if !s.connected &&
-		   time.duration_seconds(time.tick_diff(reattach_at, time.tick_now())) >= 0 {
+			time.duration_seconds(time.tick_diff(reattach_at, time.tick_now())) >= 0 {
 			err := attach(&s.game)
 			s.status = attach_error_message(err)
 			s.connected = err == .None
@@ -381,7 +436,16 @@ main :: proc() {
 			reattach_at = time.tick_add(time.tick_now(), 1 * time.Second)
 		}
 
-		if !typing_in_gui(edit_mode, count_edit) {
+		if s.connected {
+			if count, ok := get_seed_slot_count(&s.game); ok {
+				s.plant_count = count
+				s.have_seed_count = true
+			} else {
+				s.have_seed_count = false
+			}
+		}
+
+		if !typing_in_gui(edit_mode) {
 			// ALT, not SPACE: space pauses Plants vs. Zombies.
 			// Game focus only. Accepting our own panel's focus as well was tried
 			// and reverted: GLFW's synthetic ALT fires precisely while the panel
@@ -393,8 +457,12 @@ main :: proc() {
 				apply_current(&s)
 			}
 			if s.have_window {
+				if pressed(&kw, 'A') && focused {
+					s.auto_collect = !s.auto_collect
+				}
 				for vk in i32('0') ..= i32('9') {
 					if pressed(&kw, vk) {
+						s.next_collect = time.tick_add(time.tick_now(), COLLECT_INPUT_GRACE)
 						if slot, ok := vk_to_slot(vk); ok {
 							s.last_slot_ok = select_plant(&s.window, slot)
 							s.last_slot = slot
@@ -406,7 +474,8 @@ main :: proc() {
 				}
 				// X picks the shovel: it sits one pitch past the last packet,
 				// so its slot index is exactly the plant count.
-				if pressed(&kw, 'X') {
+				if pressed(&kw, 'X') && s.have_seed_count {
+					s.next_collect = time.tick_add(time.tick_now(), COLLECT_INPUT_GRACE)
 					if select_shovel(&s.window, int(s.plant_count)) {
 						s.shovel_flash = 0.35
 					}
@@ -416,11 +485,25 @@ main :: proc() {
 
 		kw.primed = true
 
+		// Poll at 20 Hz. Coin::mIsBeingCollected suppresses repeat clicks after
+		// the game consumes the posted mouse messages.
+		now := time.tick_now()
+		if s.auto_collect && s.connected && s.have_window &&
+		   time.duration_seconds(time.tick_diff(s.next_collect, now)) >= 0 {
+			if auto_collect_tick(&s.game, &s.window) > 0 {
+				s.collect_flash = 0.16
+			}
+			s.next_collect = time.tick_add(now, 50 * time.Millisecond)
+		}
+
 		if s.slot_flash > 0 {
 			s.slot_flash -= rl.GetFrameTime()
 		}
 		if s.shovel_flash > 0 {
 			s.shovel_flash -= rl.GetFrameTime()
+		}
+		if s.collect_flash > 0 {
+			s.collect_flash -= rl.GetFrameTime()
 		}
 
 		// Detect the game going away.
@@ -429,6 +512,7 @@ main :: proc() {
 				detach(&s.game)
 				s.connected = false
 				s.have_window = false
+				s.have_seed_count = false
 				s.status = "lost connection, waiting..."
 			}
 		}
@@ -436,7 +520,7 @@ main :: proc() {
 		update_measurement(&s)
 
 		rl.BeginDrawing()
-		draw_ui(&s, &custom_box, &edit_mode, &count_edit)
+		draw_ui(&s, &custom_box, &edit_mode)
 		rl.EndDrawing()
 
 		free_all(context.temp_allocator)
@@ -447,4 +531,7 @@ main :: proc() {
 		set_speed(&s.game, 1.0)
 	}
 	detach(&s.game)
+	if custom_font_loaded {
+		rl.UnloadFont(ui_font)
+	}
 }
